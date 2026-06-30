@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JP Pricing Tool — MHLW Drug-Price Analyzer</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎋</text></svg>" />
+  <!-- SheetJS (xlsx export). Absolute CDN URL, so no relative-path 404 from varying preview roots. -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <style>
+    :root {
+      --forest-deep: #16301d;
+      --forest: #2e5135;
+      --culm: #8aa657;
+      --culm-dark: #5f7e44;
+      --culm-light: #cdda9c;
+      --light: #f6f0cf;
+      --washi: #faf7ef;
+      --ink: #26302a;
+      --ink-soft: #5a6a5d;
+      --accent: #3f6b41;
+      --accent-deep: #2c4d2f;
+      --danger: #b4452f;
+      --line: #d9dcc5;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Yu Gothic", "Hiragino Kaku Gothic ProN", system-ui, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--forest-deep);
+      padding: 32px 18px 64px;
+      position: relative;
+      overflow-x: hidden;
+    }
+
+    /* ---------- Bamboo forest scene ---------- */
+    .scene {
+      position: fixed;
+      inset: 0;
+      z-index: -3;
+      background:
+        radial-gradient(120% 80% at 50% -10%, #5d8a55 0%, transparent 55%),
+        linear-gradient(180deg, #21492c 0%, #2e5135 38%, #1d3a23 100%);
+    }
+    #bamboo {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: -2;
+      display: block;
+    }
+    /* Komorebi — soft light filtering through the canopy */
+    .shafts {
+      position: fixed;
+      inset: -20% -10%;
+      z-index: -1;
+      pointer-events: none;
+      mix-blend-mode: screen;
+      opacity: 0.55;
+      background:
+        linear-gradient(108deg, transparent 0 14%, rgba(246,240,207,0.45) 16%, transparent 22%),
+        linear-gradient(108deg, transparent 0 38%, rgba(246,240,207,0.30) 41%, transparent 48%),
+        linear-gradient(108deg, transparent 0 62%, rgba(255,250,220,0.40) 66%, transparent 73%),
+        linear-gradient(108deg, transparent 0 84%, rgba(246,240,207,0.28) 88%, transparent 95%);
+      filter: blur(6px);
+      animation: drift 22s ease-in-out infinite alternate;
+    }
+    .motes {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      opacity: 0.5;
+      background-image:
+        radial-gradient(circle, rgba(255,252,224,0.9) 0 1px, transparent 2px),
+        radial-gradient(circle, rgba(255,252,224,0.7) 0 1px, transparent 2px);
+      background-size: 220px 200px, 360px 330px;
+      background-position: 20px 40px, 160px 120px;
+      animation: float 30s linear infinite;
+    }
+    @keyframes drift {
+      from { transform: translateX(-3%) skewX(0deg); }
+      to   { transform: translateX(3%) skewX(-1.5deg); }
+    }
+    @keyframes float {
+      from { background-position: 20px 0, 160px 60px; }
+      to   { background-position: 20px -200px, 160px -270px; }
+    }
+
+    /* ---------- Layout ---------- */
+    .app {
+      width: min(1020px, 100%);
+      margin: 0 auto;
+    }
+    header.masthead {
+      text-align: center;
+      margin-bottom: 24px;
+      color: var(--light);
+      text-shadow: 0 2px 12px rgba(0,0,0,0.45);
+    }
+    .lantern {
+      font-size: 2.6rem;
+      line-height: 1;
+      filter: drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+    }
+    header.masthead h1 {
+      margin: 8px 0 4px;
+      font-family: Georgia, "Times New Roman", "Yu Mincho", serif;
+      font-weight: 600;
+      font-size: clamp(1.8rem, 4vw, 2.6rem);
+      letter-spacing: 0.04em;
+    }
+    header.masthead p {
+      margin: 0;
+      font-size: 0.95rem;
+      opacity: 0.92;
+      letter-spacing: 0.02em;
+    }
+
+    .card {
+      background: rgba(250, 247, 239, 0.94);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.5);
+      border-radius: 18px;
+      box-shadow: 0 18px 40px rgba(0,0,0,0.35);
+      padding: 22px 24px;
+      margin-bottom: 20px;
+    }
+    .card h2 {
+      margin: 0 0 14px;
+      font-family: Georgia, "Yu Mincho", serif;
+      font-size: 1.15rem;
+      color: var(--accent-deep);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card h2 .num {
+      width: 26px; height: 26px; flex: none;
+      display: grid; place-items: center;
+      background: var(--accent); color: #fff;
+      border-radius: 50%; font-size: 0.85rem; font-family: system-ui;
+    }
+    .hint { color: var(--ink-soft); font-size: 0.85rem; margin: 6px 0 0; line-height: 1.5; }
+
+    /* API key row */
+    .keyrow { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .keyrow input[type="password"], .keyrow input[type="text"] {
+      flex: 1 1 320px;
+      min-width: 220px;
+      padding: 11px 13px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font-size: 0.95rem;
+      font-family: ui-monospace, "SFMono-Regular", monospace;
+      background: #fff;
+      color: var(--ink);
+    }
+    .keystate { font-size: 0.85rem; font-weight: 600; }
+    .keystate.ok { color: var(--accent); }
+    .keystate.no { color: var(--danger); }
+
+    /* Buttons */
+    button {
+      font-family: inherit;
+      cursor: pointer;
+      border: none;
+      border-radius: 10px;
+      padding: 11px 18px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      transition: transform .06s ease, filter .15s ease, background .15s ease;
+    }
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-deep); }
+    .btn-ghost { background: #fff; color: var(--accent-deep); border: 1px solid var(--line); }
+    .btn-ghost:hover:not(:disabled) { background: #f3f5e9; }
+    .btn-link { background: none; color: var(--ink-soft); padding: 6px 8px; text-decoration: underline; font-weight: 500; }
+
+    /* Dropzone */
+    .dropzone {
+      border: 2px dashed var(--culm-dark);
+      border-radius: 14px;
+      background: rgba(205, 218, 156, 0.18);
+      padding: 30px 20px;
+      text-align: center;
+      transition: background .15s ease, border-color .15s ease;
+      cursor: pointer;
+    }
+    .dropzone.drag { background: rgba(205, 218, 156, 0.42); border-color: var(--accent); }
+    .dropzone .big { font-size: 2rem; }
+    .dropzone p { margin: 8px 0 0; color: var(--ink-soft); }
+    .dropzone strong { color: var(--accent-deep); }
+
+    /* File list */
+    .filelist { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 8px; }
+    .filelist li {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 14px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font-size: 0.9rem;
+    }
+    .filelist .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .filelist .fmeta { color: var(--ink-soft); font-size: 0.8rem; flex: none; }
+    .chip {
+      flex: none; padding: 3px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .chip.queued { background: #e8ebd6; color: #6a7350; }
+    .chip.analyzing { background: #fff1cf; color: #9a6b16; }
+    .chip.done { background: #d8ecd5; color: var(--accent-deep); }
+    .chip.error { background: #f6ddd5; color: var(--danger); }
+
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; align-items: center; }
+    .spacer { flex: 1; }
+
+    /* Banner */
+    .banner { display: none; padding: 12px 16px; border-radius: 10px; margin-bottom: 16px; font-size: 0.9rem; line-height: 1.5; }
+    .banner.show { display: block; }
+    .banner.err { background: #f7e0d9; color: #7e2c1a; border: 1px solid #e6b6a6; }
+    .banner.info { background: #e7eef6; color: #284b6e; border: 1px solid #bcd0e6; }
+
+    /* Results */
+    .results-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+    .results-head select {
+      padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; font-size: 0.9rem; background: #fff; color: var(--ink);
+    }
+    .count { color: var(--ink-soft); font-size: 0.85rem; }
+    .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; min-width: 760px; }
+    thead th {
+      background: var(--accent-deep); color: #fff; text-align: left; padding: 10px 12px; font-weight: 600;
+      white-space: nowrap; position: sticky; top: 0;
+    }
+    tbody td { padding: 10px 12px; border-top: 1px solid var(--line); vertical-align: top; }
+    tbody tr.row { cursor: pointer; }
+    tbody tr.row:hover { background: #f3f5e9; }
+    tbody tr.row td:first-child { font-weight: 600; color: var(--accent-deep); }
+    .caret { display: inline-block; width: 14px; color: var(--ink-soft); transition: transform .15s; }
+    tr.row.open .caret { transform: rotate(90deg); }
+    .na { color: #b3b8a4; }
+
+    /* Detail drop-down */
+    tr.detail td { background: #fbfcf6; padding: 0; }
+    .detail-inner { padding: 14px 18px 18px 38px; display: grid; gap: 14px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 22px; }
+    .field label { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-soft); margin-bottom: 2px; }
+    .field div { font-size: 0.9rem; }
+    .pills { display: flex; flex-wrap: wrap; gap: 6px; }
+    .pill { background: #e9efd9; color: var(--accent-deep); border-radius: 999px; padding: 3px 10px; font-size: 0.8rem; }
+    .notes { background: #fff8e6; border: 1px solid #f0e2b8; border-radius: 8px; padding: 10px 12px; font-size: 0.85rem; line-height: 1.55; }
+
+    .empty { text-align: center; color: var(--ink-soft); padding: 28px 10px; font-size: 0.9rem; }
+
+    footer { text-align: center; color: rgba(246,240,207,0.85); font-size: 0.8rem; margin-top: 8px; text-shadow: 0 1px 6px rgba(0,0,0,0.4); }
+    footer code { background: rgba(0,0,0,0.25); padding: 1px 6px; border-radius: 5px; }
+    a.link { color: var(--accent-deep); }
+  </style>
+</head>
+<body>
+  <div class="scene"></div>
+  <svg id="bamboo" preserveAspectRatio="xMidYMid slice" viewBox="0 0 1000 700" aria-hidden="true"></svg>
+  <div class="shafts"></div>
+  <div class="motes"></div>
+
+  <div class="app">
+    <header class="masthead">
+      <div class="lantern">🎋</div>
+      <h1>JP Pricing Tool</h1>
+      <p>MHLW drug-price report analyzer · 日本語 → English</p>
+    </header>
+
+    <div id="banner" class="banner"></div>
+
+    <!-- 1. API key -->
+    <section class="card">
+      <h2><span class="num">1</span>Anthropic API key</h2>
+      <div class="keyrow">
+        <input id="apiKey" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" />
+        <button id="toggleKey" class="btn-ghost" type="button">Show</button>
+        <button id="saveKey" class="btn-primary" type="button">Save</button>
+        <span id="keyState" class="keystate no">No key saved</span>
+      </div>
+      <p class="hint">
+        Your key is stored only in this browser (<code>localStorage</code>) and sent directly to Anthropic from
+        your device — never to any server of ours. PDFs are sent to Claude (<code>claude-opus-4-8</code>) for
+        analysis. Get a key at <a class="link" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>.
+      </p>
+    </section>
+
+    <!-- 2. Upload -->
+    <section class="card">
+      <h2><span class="num">2</span>Upload MHLW drug-price PDFs</h2>
+      <div id="dropzone" class="dropzone">
+        <div class="big">📄⤴</div>
+        <p><strong>Click to choose</strong> or drag &amp; drop one or more PDF files here.</p>
+        <p style="font-size:0.8rem">Japanese reports welcome — abbreviations are expanded and everything is translated to English.</p>
+      </div>
+      <input id="fileInput" type="file" accept="application/pdf" multiple hidden />
+      <ul id="fileList" class="filelist"></ul>
+      <div class="actions">
+        <button id="analyzeBtn" class="btn-primary" type="button" disabled>Analyze</button>
+        <button id="clearBtn" class="btn-ghost" type="button" disabled>Clear</button>
+        <span class="spacer"></span>
+        <button id="sampleBtn" class="btn-link" type="button">Load sample row</button>
+      </div>
+    </section>
+
+    <!-- 3. Results -->
+    <section class="card">
+      <h2><span class="num">3</span>Results</h2>
+      <div class="results-head">
+        <label for="fileFilter" class="count">View:</label>
+        <select id="fileFilter"><option value="__all">All files</option></select>
+        <span id="rowCount" class="count"></span>
+        <span class="spacer"></span>
+        <button id="exportBtn" class="btn-primary" type="button" disabled>⬇ Export to Excel (.xlsx)</button>
+      </div>
+      <div id="resultsArea">
+        <p class="empty">No results yet. Add a key, upload PDFs, and press <strong>Analyze</strong>.</p>
+      </div>
+    </section>
+
+    <footer>
+      Calls the Anthropic API directly from your browser. Results are AI-extracted — verify against the source for regulatory use.
+    </footer>
+  </div>
+
+  <script>
+    "use strict";
+
+    // ---------- Bamboo forest (drawn into the fixed <svg>) ----------
+    (function drawBamboo() {
+      const svg = document.getElementById("bamboo");
+      if (!svg) return;
+      const NS = "http://www.w3.org/2000/svg";
+      // Three depth layers: far (blurred, pale), mid, near (sharp, saturated).
+      const layers = [
+        { count: 7, wMin: 10, wMax: 16, color: "#6f8f57", alpha: 0.45, blur: 3.2 },
+        { count: 6, wMin: 18, wMax: 26, color: "#7fa052", alpha: 0.7,  blur: 1.4 },
+        { count: 4, wMin: 30, wMax: 44, color: "#8fb056", alpha: 0.92, blur: 0.3 },
+      ];
+      // gentle deterministic pseudo-random so the scene is stable across reloads
+      let seed = 7;
+      const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+
+      layers.forEach((L, li) => {
+        const g = document.createElementNS(NS, "g");
+        g.setAttribute("filter", `blur(${L.blur}px)`);
+        g.style.filter = `blur(${L.blur}px)`;
+        for (let i = 0; i < L.count; i++) {
+          const w = L.wMin + rnd() * (L.wMax - L.wMin);
+          const x = (i / L.count) * 1000 + (rnd() * 90 - 45) + li * 30;
+          const lean = (rnd() * 24 - 12);
+          // culm body
+          const rect = document.createElementNS(NS, "path");
+          const topX = x + lean;
+          rect.setAttribute("d", `M ${topX} -40 L ${topX + w} -40 L ${x + w} 740 L ${x} 740 Z`);
+          rect.setAttribute("fill", L.color);
+          rect.setAttribute("opacity", L.alpha);
+          g.appendChild(rect);
+          // highlight stripe down the culm
+          const hi = document.createElementNS(NS, "path");
+          const hx = topX + w * 0.22;
+          hi.setAttribute("d", `M ${hx} -40 L ${hx + w * 0.2} -40 L ${x + w * 0.42} 740 L ${x + w * 0.22} 740 Z`);
+          hi.setAttribute("fill", "#d7e6ad");
+          hi.setAttribute("opacity", L.alpha * 0.5);
+          g.appendChild(hi);
+          // node rings down the stalk
+          const nodes = 5 + Math.floor(rnd() * 3);
+          for (let n = 1; n <= nodes; n++) {
+            const t = n / (nodes + 1);
+            const ny = -40 + t * 780;
+            const nx = topX + (x - topX) * t;
+            const ring = document.createElementNS(NS, "rect");
+            ring.setAttribute("x", nx - 1);
+            ring.setAttribute("y", ny);
+            ring.setAttribute("width", w + 2);
+            ring.setAttribute("height", Math.max(3, w * 0.16));
+            ring.setAttribute("rx", 2);
+            ring.setAttribute("fill", "#4f6b3a");
+            ring.setAttribute("opacity", L.alpha * 0.8);
+            g.appendChild(ring);
+          }
+        }
+        svg.appendChild(g);
+      });
+    })();
+
+    // ---------- Elements ----------
+    const $ = (id) => document.getElementById(id);
+    const els = {
+      apiKey: $("apiKey"), toggleKey: $("toggleKey"), saveKey: $("saveKey"), keyState: $("keyState"),
+      dropzone: $("dropzone"), fileInput: $("fileInput"), fileList: $("fileList"),
+      analyzeBtn: $("analyzeBtn"), clearBtn: $("clearBtn"), sampleBtn: $("sampleBtn"),
+      fileFilter: $("fileFilter"), rowCount: $("rowCount"), exportBtn: $("exportBtn"),
+      resultsArea: $("resultsArea"), banner: $("banner"),
+    };
+
+    // ---------- State ----------
+    const KEY_STORE = "jp_pricing_api_key";
+    let files = [];        // {id, name, sizeKB, status, error, b64, rows:[]}
+    let nextId = 1;
+    let analyzing = false;
+
+    // ---------- API key ----------
+    function loadKey() {
+      const k = localStorage.getItem(KEY_STORE) || "";
+      els.apiKey.value = k;
+      reflectKey(k);
+    }
+    function reflectKey(k) {
+      if (k && k.trim()) {
+        els.keyState.textContent = "Key saved ✓";
+        els.keyState.className = "keystate ok";
+      } else {
+        els.keyState.textContent = "No key saved";
+        els.keyState.className = "keystate no";
+      }
+      refreshControls();
+    }
+    els.saveKey.addEventListener("click", () => {
+      const k = els.apiKey.value.trim();
+      localStorage.setItem(KEY_STORE, k);
+      reflectKey(k);
+      banner(k ? "info" : "err", k ? "API key saved in this browser." : "Key cleared.");
+    });
+    els.toggleKey.addEventListener("click", () => {
+      const show = els.apiKey.type === "password";
+      els.apiKey.type = show ? "text" : "password";
+      els.toggleKey.textContent = show ? "Hide" : "Show";
+    });
+    function getKey() { return (localStorage.getItem(KEY_STORE) || els.apiKey.value || "").trim(); }
+
+    // ---------- Banner ----------
+    let bannerTimer = null;
+    function banner(kind, msg, sticky) {
+      els.banner.textContent = msg;
+      els.banner.className = "banner show " + (kind === "err" ? "err" : "info");
+      clearTimeout(bannerTimer);
+      if (!sticky) bannerTimer = setTimeout(() => { els.banner.className = "banner"; }, 6000);
+    }
+
+    // ---------- File intake ----------
+    els.dropzone.addEventListener("click", () => els.fileInput.click());
+    els.fileInput.addEventListener("change", (e) => { addFiles(e.target.files); els.fileInput.value = ""; });
+    ["dragover", "dragenter"].forEach(ev =>
+      els.dropzone.addEventListener(ev, (e) => { e.preventDefault(); els.dropzone.classList.add("drag"); }));
+    ["dragleave", "dragend", "drop"].forEach(ev =>
+      els.dropzone.addEventListener(ev, () => els.dropzone.classList.remove("drag")));
+    els.dropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      addFiles(e.dataTransfer.files);
+    });
+
+    function addFiles(fileList) {
+      const pdfs = Array.from(fileList || []).filter(f => f.type === "application/pdf" || /\.pdf$/i.test(f.name));
+      if (!pdfs.length) { banner("err", "Please choose PDF files."); return; }
+      pdfs.forEach(f => {
+        const rec = { id: nextId++, name: f.name, sizeKB: Math.round(f.size / 1024), status: "queued", error: "", b64: null, rows: [], file: f };
+        files.push(rec);
+        fileToBase64(f).then(b64 => { rec.b64 = b64; }).catch(() => { rec.status = "error"; rec.error = "Could not read file."; renderFiles(); });
+      });
+      renderFiles();
+      refreshControls();
+    }
+
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => {
+          const s = String(fr.result);
+          const comma = s.indexOf(",");
+          resolve(comma >= 0 ? s.slice(comma + 1) : s);
+        };
+        fr.onerror = reject;
+        fr.readAsDataURL(file);
+      });
+    }
+
+    els.clearBtn.addEventListener("click", () => {
+      if (analyzing) return;
+      files = [];
+      renderFiles();
+      renderResults();
+      refreshControls();
+    });
+
+    function renderFiles() {
+      els.fileList.innerHTML = "";
+      files.forEach(f => {
+        const li = document.createElement("li");
+        const chip = `<span class="chip ${f.status}">${labelFor(f)}</span>`;
+        li.innerHTML = `${chip}<span class="fname" title="${esc(f.name)}">${esc(f.name)}</span>` +
+          `<span class="fmeta">${f.sizeKB} KB</span>`;
+        els.fileList.appendChild(li);
+      });
+    }
+    function labelFor(f) {
+      if (f.status === "error") return "error";
+      if (f.status === "analyzing") return "analyzing…";
+      if (f.status === "done") return `done · ${f.rows.length}`;
+      return "queued";
+    }
+
+    function refreshControls() {
+      const hasQueued = files.some(f => f.status === "queued" || f.status === "error");
+      els.analyzeBtn.disabled = analyzing || !hasQueued || !getKey();
+      els.clearBtn.disabled = analyzing || files.length === 0;
+      const totalRows = allRows().length;
+      els.exportBtn.disabled = totalRows === 0;
+    }
+
+    // ---------- Extraction schema + prompt ----------
+    const nul = (t) => ({ type: [t, "null"] });
+    const DRUG_SCHEMA = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        drugs: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              drug_name: nul("string"),
+              generic_name: nul("string"),
+              strength_formulation: nul("string"),
+              date_priced: nul("string"),
+              drug_category: nul("string"),
+              manufacturer: nul("string"),
+              pricing_method: nul("string"),
+              comparator_drug: nul("string"),
+              premiums: {
+                type: "array",
+                items: {
+                  type: "object", additionalProperties: false,
+                  properties: { name: nul("string"), value: nul("string") },
+                  required: ["name", "value"]
+                }
+              },
+              price_pre_premium: nul("string"),
+              price_post_premium: nul("string"),
+              foreign_price_adjustment: {
+                type: "object", additionalProperties: false,
+                properties: { received: nul("boolean"), direction: nul("string"), adjustment: nul("string") },
+                required: ["received", "direction", "adjustment"]
+              },
+              foreign_comparator_prices: {
+                type: "array",
+                items: {
+                  type: "object", additionalProperties: false,
+                  properties: { country: nul("string"), price: nul("string") },
+                  required: ["country", "price"]
+                }
+              },
+              pmp_eligibility: nul("string"),
+              notes: nul("string")
+            },
+            required: [
+              "drug_name", "generic_name", "strength_formulation", "date_priced", "drug_category",
+              "manufacturer", "pricing_method", "comparator_drug", "premiums", "price_pre_premium",
+              "price_post_premium", "foreign_price_adjustment", "foreign_comparator_prices",
+              "pmp_eligibility", "notes"
+            ]
+          }
+        }
+      },
+      required: ["drugs"]
+    };
+
+    const PROMPT = [
+      "You are a Japanese pharmaceutical pricing analyst. This PDF is an MHLW (厚生労働省 / 中医協) drug-price",
+      "publication report, in Japanese, possibly containing abbreviations.",
+      "Extract every drug listed and return data for each one. TRANSLATE ALL output to natural English.",
+      "Expand and translate any Japanese abbreviations; when an abbreviation or value is ambiguous, still give your",
+      "best English rendering and record the uncertainty in `notes`.",
+      "",
+      "Field guidance:",
+      "- pricing_method: the 算定方式 (e.g. similar-efficacy comparison method I/II 類似薬効比較方式, cost-calculation method 原価計算方式).",
+      "- comparator_drug: the 最類似薬 / comparator drug, if the method uses one.",
+      "- premiums: each 補正加算 as {name, value} — e.g. usefulness 有用性加算, novelty/epoch-making 画期性加算,",
+      "  marketability 市場性加算, pediatric 小児加算, pioneer/sakigake 先駆加算 — with its percentage.",
+      "- price_pre_premium / price_post_premium: NHI price before vs after premiums (include unit & dosage form).",
+      "- foreign_price_adjustment: the 外国平均価格調整 — whether it was applied, the direction (raised/lowered),",
+      "  and the amount or ratio.",
+      "- foreign_comparator_prices: reference prices in the US / UK / Germany / France where available.",
+      "- pmp_eligibility: eligibility for the Price Maintenance Premium (新薬創出・適応外薬解消等促進加算).",
+      "- notes: anything else relevant — abbreviation expansions, assumptions, caveats.",
+      "Leave a field null if the report does not state it. Do not invent values."
+    ].join("\n");
+
+    function buildBody(b64) {
+      return {
+        model: "claude-opus-4-8",
+        max_tokens: 16000,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } },
+            { type: "text", text: PROMPT }
+          ]
+        }],
+        output_config: { format: { type: "json_schema", schema: DRUG_SCHEMA } }
+      };
+    }
+
+    // ---------- Analyze ----------
+    els.analyzeBtn.addEventListener("click", analyzeAll);
+
+    async function analyzeAll() {
+      const key = getKey();
+      if (!key) { banner("err", "Save your Anthropic API key first."); return; }
+      analyzing = true;
+      refreshControls();
+      els.banner.className = "banner";
+      const queue = files.filter(f => f.status === "queued" || f.status === "error");
+      for (const f of queue) {
+        await analyzeFile(f, key);
+      }
+      analyzing = false;
+      refreshControls();
+      const errs = files.filter(f => f.status === "error").length;
+      banner(errs ? "err" : "info",
+        errs ? `Finished with ${errs} file(s) in error — see status chips.` : "Analysis complete.");
+    }
+
+    async function analyzeFile(f, key) {
+      // ensure base64 is ready
+      if (!f.b64) {
+        try { f.b64 = await fileToBase64(f.file); }
+        catch { f.status = "error"; f.error = "Could not read file."; renderFiles(); return; }
+      }
+      f.status = "analyzing"; f.error = ""; renderFiles();
+      try {
+        const resp = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "anthropic-dangerous-direct-browser-access": "true"
+          },
+          body: JSON.stringify(buildBody(f.b64))
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          throw new Error((data && data.error && data.error.message) || `HTTP ${resp.status}`);
+        }
+        if (data.stop_reason === "refusal") {
+          throw new Error("The model declined to process this document (refusal).");
+        }
+        const textBlock = (data.content || []).find(b => b.type === "text");
+        if (!textBlock) throw new Error("No text content returned.");
+        let parsed;
+        try { parsed = JSON.parse(textBlock.text); }
+        catch { throw new Error("Could not parse structured output."); }
+        const drugs = Array.isArray(parsed.drugs) ? parsed.drugs : [];
+        f.rows = drugs.map(d => ({ ...d, source_file: f.name }));
+        f.status = "done";
+      } catch (err) {
+        f.status = "error";
+        f.error = err.message || String(err);
+        banner("err", `${f.name}: ${f.error}`, true);
+      }
+      renderFiles();
+      renderResults();
+      refreshControls();
+    }
+
+    // ---------- Sample (for trying the UI / export without a key) ----------
+    els.sampleBtn.addEventListener("click", () => {
+      const demo = {
+        id: nextId++, name: "sample-report.pdf", sizeKB: 0, status: "done", error: "", b64: null, file: null,
+        rows: [{
+          drug_name: "Sample-mab (sample)",
+          generic_name: "sampleizumab",
+          strength_formulation: "100 mg vial, IV infusion",
+          date_priced: "2026-05-22",
+          drug_category: "New active ingredient (区分 1)",
+          manufacturer: "Example Pharma K.K.",
+          pricing_method: "Cost-calculation method (原価計算方式)",
+          comparator_drug: null,
+          premiums: [
+            { name: "Usefulness premium (II) 有用性加算(II)", value: "+15%" },
+            { name: "Marketability premium (I) 市場性加算(I)", value: "+10%" }
+          ],
+          price_pre_premium: "¥48,200 / vial",
+          price_post_premium: "¥60,250 / vial",
+          foreign_price_adjustment: { received: true, direction: "lowered", adjustment: "−4.2% (to within 1.25× foreign average)" },
+          foreign_comparator_prices: [
+            { country: "United States", price: "$612" },
+            { country: "Germany", price: "€498" },
+            { country: "United Kingdom", price: "£402" }
+          ],
+          pmp_eligibility: "Eligible (新薬創出加算 — meets innovation criteria)",
+          notes: "Demo row only. Foreign price adjustment lowered the cost-calculated price toward the foreign average.",
+          source_file: "sample-report.pdf"
+        }]
+      };
+      files.push(demo);
+      renderFiles();
+      renderResults();
+      refreshControls();
+      banner("info", "Sample row loaded — try the dropdown detail and Excel export.");
+    });
+
+    // ---------- Results rendering ----------
+    function allRows() { return files.flatMap(f => f.rows.map(r => ({ ...r, source_file: r.source_file || f.name }))); }
+
+    function activeRows() {
+      const sel = els.fileFilter.value;
+      const rows = allRows();
+      if (sel === "__all") return rows;
+      return rows.filter(r => r.source_file === sel);
+    }
+
+    function syncFilterOptions() {
+      const names = [...new Set(files.filter(f => f.rows.length).map(f => f.name))];
+      const prev = els.fileFilter.value;
+      els.fileFilter.innerHTML = `<option value="__all">All files</option>` +
+        names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+      if ([...els.fileFilter.options].some(o => o.value === prev)) els.fileFilter.value = prev;
+    }
+    els.fileFilter.addEventListener("change", renderResults);
+
+    function val(v) { return (v === null || v === undefined || v === "") ? `<span class="na">—</span>` : esc(String(v)); }
+
+    function renderResults() {
+      syncFilterOptions();
+      const rows = activeRows();
+      els.rowCount.textContent = rows.length ? `${rows.length} drug${rows.length === 1 ? "" : "s"}` : "";
+      if (!rows.length) {
+        els.resultsArea.innerHTML = `<p class="empty">No results yet. Add a key, upload PDFs, and press <strong>Analyze</strong>.</p>`;
+        refreshControls();
+        return;
+      }
+      const head = ["Drug", "Date priced", "Category", "Manufacturer", "Pricing method", "Post-premium price", "PMP", "Source"];
+      let html = `<div class="tablewrap"><table><thead><tr><th style="width:24px"></th>` +
+        head.map(h => `<th>${h}</th>`).join("") + `</tr></thead><tbody>`;
+      rows.forEach((r, i) => {
+        html += `<tr class="row" data-i="${i}">` +
+          `<td><span class="caret">▶</span></td>` +
+          `<td>${val(r.drug_name)}</td>` +
+          `<td>${val(r.date_priced)}</td>` +
+          `<td>${val(r.drug_category)}</td>` +
+          `<td>${val(r.manufacturer)}</td>` +
+          `<td>${val(r.pricing_method)}</td>` +
+          `<td>${val(r.price_post_premium)}</td>` +
+          `<td>${val(r.pmp_eligibility)}</td>` +
+          `<td>${val(r.source_file)}</td>` +
+        `</tr>`;
+        html += `<tr class="detail" data-i="${i}" hidden><td colspan="9">${detailHtml(r)}</td></tr>`;
+      });
+      html += `</tbody></table></div>`;
+      els.resultsArea.innerHTML = html;
+
+      els.resultsArea.querySelectorAll("tr.row").forEach(tr => {
+        tr.addEventListener("click", () => {
+          const i = tr.getAttribute("data-i");
+          const detail = els.resultsArea.querySelector(`tr.detail[data-i="${i}"]`);
+          const open = detail.hasAttribute("hidden");
+          if (open) { detail.removeAttribute("hidden"); tr.classList.add("open"); }
+          else { detail.setAttribute("hidden", ""); tr.classList.remove("open"); }
+        });
+      });
+      refreshControls();
+    }
+
+    function detailHtml(r) {
+      const fa = r.foreign_price_adjustment || {};
+      const faText = fa.received === null || fa.received === undefined
+        ? null
+        : (fa.received ? `Yes${fa.direction ? " — " + fa.direction : ""}${fa.adjustment ? " (" + fa.adjustment + ")" : ""}` : "No");
+      const premiums = (r.premiums || []).filter(p => p && (p.name || p.value));
+      const foreign = (r.foreign_comparator_prices || []).filter(p => p && (p.country || p.price));
+
+      const field = (lbl, v) => `<div class="field"><label>${lbl}</label><div>${val(v)}</div></div>`;
+
+      let html = `<div class="detail-inner"><div class="grid">`;
+      html += field("Drug (brand)", r.drug_name);
+      html += field("Generic / INN", r.generic_name);
+      html += field("Strength / formulation", r.strength_formulation);
+      html += field("Date priced", r.date_priced);
+      html += field("Category", r.drug_category);
+      html += field("Manufacturer", r.manufacturer);
+      html += field("Pricing method", r.pricing_method);
+      html += field("Comparator drug", r.comparator_drug);
+      html += field("Price (pre-premium)", r.price_pre_premium);
+      html += field("Price (post-premium)", r.price_post_premium);
+      html += field("Foreign price adjustment", faText);
+      html += field("PMP eligibility", r.pmp_eligibility);
+      html += `</div>`;
+
+      html += `<div class="field"><label>Premiums earned (補正加算)</label>`;
+      html += premiums.length
+        ? `<div class="pills">${premiums.map(p => `<span class="pill">${esc(p.name || "—")}${p.value ? " · " + esc(p.value) : ""}</span>`).join("")}</div>`
+        : `<div class="na">— none recorded</div>`;
+      html += `</div>`;
+
+      html += `<div class="field"><label>Foreign comparator prices</label>`;
+      html += foreign.length
+        ? `<div class="pills">${foreign.map(p => `<span class="pill">${esc(p.country || "—")}${p.price ? " · " + esc(p.price) : ""}</span>`).join("")}</div>`
+        : `<div class="na">— none available</div>`;
+      html += `</div>`;
+
+      if (r.notes) html += `<div class="notes"><strong>Notes:</strong> ${esc(r.notes)}</div>`;
+      html += `</div>`;
+      return html;
+    }
+
+    // ---------- Excel export ----------
+    els.exportBtn.addEventListener("click", () => {
+      const rows = activeRows();
+      if (!rows.length) return;
+      if (typeof XLSX === "undefined") {
+        banner("err", "Excel library failed to load (CDN blocked). Check your connection and reload.", true);
+        return;
+      }
+      const records = rows.map(r => ({
+        "Drug (brand)": r.drug_name || "",
+        "Generic / INN": r.generic_name || "",
+        "Strength / formulation": r.strength_formulation || "",
+        "Date priced": r.date_priced || "",
+        "Category": r.drug_category || "",
+        "Manufacturer": r.manufacturer || "",
+        "Pricing method": r.pricing_method || "",
+        "Comparator drug": r.comparator_drug || "",
+        "Premiums (補正加算)": (r.premiums || []).filter(p => p && (p.name || p.value))
+          .map(p => `${p.name || ""}${p.value ? " (" + p.value + ")" : ""}`).join("; "),
+        "Price (pre-premium)": r.price_pre_premium || "",
+        "Price (post-premium)": r.price_post_premium || "",
+        "Foreign price adjustment": foreignAdjText(r.foreign_price_adjustment),
+        "Foreign comparator prices": (r.foreign_comparator_prices || []).filter(p => p && (p.country || p.price))
+          .map(p => `${p.country || ""}: ${p.price || ""}`).join("; "),
+        "PMP eligibility": r.pmp_eligibility || "",
+        "Notes": r.notes || "",
+        "Source file": r.source_file || ""
+      }));
+      const ws = XLSX.utils.json_to_sheet(records);
+      ws["!cols"] = Object.keys(records[0]).map(k => ({ wch: Math.min(40, Math.max(14, k.length + 2)) }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "MHLW Pricing");
+      const stamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `jp-pricing-${stamp}.xlsx`);
+      banner("info", `Exported ${records.length} row(s) to Excel.`);
+    });
+
+    function foreignAdjText(fa) {
+      if (!fa || fa.received === null || fa.received === undefined) return "";
+      if (!fa.received) return "No";
+      return `Yes${fa.direction ? " — " + fa.direction : ""}${fa.adjustment ? " (" + fa.adjustment + ")" : ""}`;
+    }
+
+    // ---------- utils ----------
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    // ---------- init ----------
+    loadKey();
+    renderResults();
+    if (typeof XLSX === "undefined") {
+      // SheetJS not yet evaluated at parse time is fine; only warn if it never loads.
+      window.addEventListener("load", () => {
+        if (typeof XLSX === "undefined") {
+          banner("err", "Excel export library could not load from the CDN. The page still works; only .xlsx export is affected.", true);
+        }
+      });
+    }
+  </script>
+</body>
+</html>
