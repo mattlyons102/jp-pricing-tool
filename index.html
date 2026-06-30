@@ -202,13 +202,15 @@
     /* File list */
     .filelist { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 8px; }
     .filelist li {
-      display: flex; align-items: center; gap: 12px;
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
       padding: 10px 14px;
       background: #fff;
       border: 1px solid var(--line);
       border-radius: 10px;
       font-size: 0.9rem;
     }
+    .filelist li:has(.ferror) { border-color: #e6b6a6; background: #fffaf8; }
+    .filelist .ferror { flex-basis: 100%; color: var(--danger); font-size: 0.82rem; line-height: 1.45; word-break: break-word; }
     .filelist .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .filelist .fmeta { color: var(--ink-soft); font-size: 0.8rem; flex: none; }
     .chip {
@@ -501,7 +503,8 @@
         const li = document.createElement("li");
         const chip = `<span class="chip ${f.status}">${labelFor(f)}</span>`;
         li.innerHTML = `${chip}<span class="fname" title="${esc(f.name)}">${esc(f.name)}</span>` +
-          `<span class="fmeta">${f.sizeKB} KB</span>`;
+          `<span class="fmeta">${f.sizeKB} KB</span>` +
+          (f.status === "error" && f.error ? `<span class="ferror">⚠ ${esc(f.error)}</span>` : "");
         els.fileList.appendChild(li);
       });
     }
@@ -596,7 +599,21 @@
       "- foreign_comparator_prices: reference prices in the US / UK / Germany / France where available.",
       "- pmp_eligibility: eligibility for the Price Maintenance Premium (新薬創出・適応外薬解消等促進加算).",
       "- notes: anything else relevant — abbreviation expansions, assumptions, caveats.",
-      "Leave a field null if the report does not state it. Do not invent values."
+      "Leave a field null if the report does not state it. Do not invent values.",
+      "",
+      "OUTPUT FORMAT — IMPORTANT: respond with a SINGLE JSON object ONLY. No prose, no explanation,",
+      "no markdown, no code fences. Shape:",
+      '{"drugs": [ {',
+      '  "drug_name": string|null, "generic_name": string|null, "strength_formulation": string|null,',
+      '  "date_priced": string|null, "drug_category": string|null, "manufacturer": string|null,',
+      '  "pricing_method": string|null, "comparator_drug": string|null,',
+      '  "premiums": [ {"name": string, "value": string} ],',
+      '  "price_pre_premium": string|null, "price_post_premium": string|null,',
+      '  "foreign_price_adjustment": {"received": boolean|null, "direction": string|null, "adjustment": string|null},',
+      '  "foreign_comparator_prices": [ {"country": string, "price": string} ],',
+      '  "pmp_eligibility": string|null, "notes": string|null',
+      "} ] }",
+      'If no drugs are found, return exactly {"drugs": []}.'
     ].join("\n");
 
     function buildBody(b64) {
@@ -609,9 +626,20 @@
             { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } },
             { type: "text", text: PROMPT }
           ]
-        }],
-        output_config: { format: { type: "json_schema", schema: DRUG_SCHEMA } }
+        }]
       };
+    }
+
+    // Pull a JSON object out of the model's text (tolerates stray prose or code fences).
+    function stripJson(t) {
+      let s = String(t).trim();
+      const fence = s.match(/^```[a-zA-Z]*\s*([\s\S]*?)\s*```$/);
+      if (fence) s = fence[1].trim();
+      if (s[0] !== "{") {
+        const a = s.indexOf("{"), b = s.lastIndexOf("}");
+        if (a >= 0 && b > a) s = s.slice(a, b + 1);
+      }
+      return s;
     }
 
     // ---------- Analyze ----------
@@ -629,9 +657,12 @@
       }
       analyzing = false;
       refreshControls();
-      const errs = files.filter(f => f.status === "error").length;
-      banner(errs ? "err" : "info",
-        errs ? `Finished with ${errs} file(s) in error — see status chips.` : "Analysis complete.");
+      const errd = files.filter(f => f.status === "error");
+      if (errd.length) {
+        banner("err", `${errd.length} file(s) errored — the reason is shown in red under each file. First: ${errd[0].error}`, true);
+      } else {
+        banner("info", "Analysis complete.");
+      }
     }
 
     async function analyzeFile(f, key) {
@@ -660,10 +691,14 @@
           throw new Error("The model declined to process this document (refusal).");
         }
         const textBlock = (data.content || []).find(b => b.type === "text");
-        if (!textBlock) throw new Error("No text content returned.");
+        if (!textBlock) {
+          throw new Error(data.stop_reason === "max_tokens"
+            ? "Response hit the token limit before returning text — try a smaller PDF."
+            : "No text content returned by the model.");
+        }
         let parsed;
-        try { parsed = JSON.parse(textBlock.text); }
-        catch { throw new Error("Could not parse structured output."); }
+        try { parsed = JSON.parse(stripJson(textBlock.text)); }
+        catch { throw new Error("Model did not return valid JSON. Starts with: " + textBlock.text.trim().slice(0, 140)); }
         const drugs = Array.isArray(parsed.drugs) ? parsed.drugs : [];
         f.rows = drugs.map(d => ({ ...d, source_file: f.name }));
         f.status = "done";
